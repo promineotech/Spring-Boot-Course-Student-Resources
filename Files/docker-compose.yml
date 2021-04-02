@@ -1,0 +1,63 @@
+# This docker-compose file starts MySQL and Flyway in a bridge network. When the Flyway container becomes active, it 
+# creates the tables in the MySQL database and populates them.
+version: '3.7'
+
+services:
+  # This section defines the mysql service, named "db". The name can be referenced in things like URLs. So, we can tell
+  # Flyway to find the database at jdbc:mysql://db and Docker Compose will fill in the network details.
+  db:
+    container_name: mysql
+    image: mysql:latest
+    restart: always
+    environment:
+      # These environment variables cause MySQL to create the users username/password
+      # root/root and dev/dev. It also creates a database named jeep.
+      MYSQL_ROOT_USER: root
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: jeep
+      MYSQL_USER: jeep
+      MYSQL_PASSWORD: jeep
+    ports:
+      # Forward host port 8306 to guest port 3306 (MySQL default port). This means that applications external to the
+      # container cluster can access MySQL within the container on port 8306 and the requests are forwarded to port 3306
+      # within the cluster.
+      - "8306:3306"
+    networks:
+      - jeep
+
+  # Flyway is used to create the tables and populate them with data. The migration files are found in 
+  # src/functional-test/resources. The schema is applied first to create the tables (V1.0__Jeep_Schema.sql) and 
+  # then the data is applied in V1.1__Jeep_Data.sql. Note that these files are also applied for each functional
+  # (integration) test using the @Sql annotation in the functional test classes.
+  flyway:
+    container_name: flyway
+    image: flyway/flyway:latest
+    command: migrate
+    
+    # These environment variables are used in ./flyway/conf/flyway.conf to tell Flyway which database to connect to.
+    environment:
+      FLYWAY_URL: jdbc:mysql://db
+      FLYWAY_SCHEMAS: jeep
+      FLYWAY_USER: jeep
+      FLYWAY_PASSWORD: jeep
+      
+      # Set the retry count to let the database come up before Flyway gives up.
+      FLYWAY_CONNECT_RETRIES: 60
+    volumes:
+      # Create a volume between ./src/functional-test/resources/flyway/migrations in the host and /flyway/sql in the 
+      # container. This allows Flyway to grab the migration files from the default location.
+      - ./src/test/resources/flyway/migrations:/flyway/sql
+      
+      # Create a volume between ./src/functional-test/resources/flyway/conf on the host and /flyway/conf in the 
+      # container. This allows Flyway to read configuration fron the default configuration location.
+      - ./src/test/resources/flyway/conf:/flyway/conf
+    depends_on:
+      - db
+    networks:
+      - jeep
+
+# Create a bridge network between the MySQL container and the Flyway container.
+networks:
+  jeep:
+    driver: bridge
+    name: jeep-to-jeep
